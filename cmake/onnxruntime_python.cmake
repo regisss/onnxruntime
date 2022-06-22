@@ -28,11 +28,23 @@ if(onnxruntime_ENABLE_TRAINING)
   list(REMOVE_ITEM onnxruntime_pybind_srcs  ${ONNXRUNTIME_ROOT}/python/onnxruntime_pybind_module.cc)
 endif()
 
-if (onnxruntime_ENABLE_EAGER_MODE)
+# Add Pytorch as a library.
+if (onnxruntime_ENABLE_LAZY_TENSOR OR onnxruntime_ENABLE_EAGER_MODE)
+  # Both Lazy Tensor and Eager Mode require Pytorch as a library.
   list(APPEND CMAKE_PREFIX_PATH ${onnxruntime_PREBUILT_PYTORCH_PATH})
+  # The following line may change ${CUDA_NVCC_FLAGS} and ${CMAKE_CUDA_FLAGS},
+  # if Pytorch is built from source.
+  # For example, pytorch/cmake/public/cuda.cmake and
+  # pytorch/torch/share/cmake/Caffe2/public/cuda.cmake both defines
+  # ONNX_NAMESPACE for both CUDA_NVCC_FLAGS and CMAKE_CUDA_FLAGS.
+  # Later, this ONNX_NAMESPACE may conflicts with ONNX_NAMESPACE set by ORT.
   find_package(Torch REQUIRED)
-  find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib")
+  # Let's remove ONNX_NAMESPACE from Torch.
+  list(FILTER CUDA_NVCC_FLAGS EXCLUDE REGEX "-DONNX_NAMESPACE=.+")
+  string(REGEX REPLACE "-DONNX_NAMESPACE=.+ " " " CMAKE_CUDA_FLAGS ${CMAKE_CUDA_FLAGS})
+endif()
 
+if (onnxruntime_ENABLE_EAGER_MODE)
   file(GLOB onnxruntime_eager_extension_srcs CONFIGURE_DEPENDS
     "${ORTTRAINING_ROOT}/orttraining/eager/*.cpp"
     )
@@ -43,33 +55,13 @@ endif()
 
 # Support ORT as a backend in Pytorch's LazyTensor.
 if (onnxruntime_ENABLE_LAZY_TENSOR)
-  list(APPEND CMAKE_PREFIX_PATH ${onnxruntime_PREBUILT_PYTORCH_PATH})
-  # This line may change ${CUDA_NVCC_FLAGS} and ${CMAKE_CUDA_FLAGS},
-  # if Pytorch is built from source.
-  # For example, pytorch/cmake/public/cuda.cmake and
-  # pytorch/torch/share/cmake/Caffe2/public/cuda.cmake both defines
-  # ONNX_NAMESPACE for both CUDA_NVCC_FLAGS and CMAKE_CUDA_FLAGS.
-  # Later, this ONNX_NAMESPACE may conflicts with ONNX_NAMESPACE set by ORT.
-  find_package(Torch REQUIRED)
-  # Let's remove ONNX_NAMESPACE from Torch.
-  # ORT's cmake file will add it later.
-  list(FILTER CUDA_NVCC_FLAGS EXCLUDE REGEX "-DONNX_NAMESPACE=.+")
-  string(REGEX REPLACE "-DONNX_NAMESPACE=.+ " " " CMAKE_CUDA_FLAGS ${CMAKE_CUDA_FLAGS})
-  # TODO: check if we can remove this.
-  find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib")
-
   file(GLOB onnxruntime_lazy_tensor_extension_srcs CONFIGURE_DEPENDS
     "${ORTTRAINING_ROOT}/orttraining/lazy_tensor/*.cpp")
+  file(GLOB onnxruntime_lazy_tensor_extension_headers CONFIGURE_DEPENDS
+    "${ORTTRAINING_ROOT}/orttraining/lazy_tensor/*.h")
 
-  file(GLOB onnxruntime_lazy_tensor_extension_all "${ORTTRAINING_ROOT}/orttraining/lazy_tensor/*")
-  set_property(SOURCE ${onnxruntime_lazy_tensor_extension_all} PROPERTY COMPILE_FLAGS -Wno-unused-parameter)
-  set_source_files_properties("${ORTTRAINING_ROOT}/orttraining/lazy_tensor/register.cpp" PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
-  set_source_files_properties("${ORTTRAINING_ROOT}/orttraining/lazy_tensor/accelerator.h" PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
-  set_source_files_properties("${ORTTRAINING_ROOT}/orttraining/lazy_tensor/accelerator.cpp" PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
-  set_source_files_properties("${ORTTRAINING_ROOT}/orttraining/lazy_tensor/bridge.h" PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
-  set_source_files_properties("${ORTTRAINING_ROOT}/orttraining/lazy_tensor/bridge.cpp" PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
-  set_source_files_properties("${ORTTRAINING_ROOT}/orttraining/lazy_tensor/debug.h" PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
-  set_source_files_properties("${ORTTRAINING_ROOT}/orttraining/lazy_tensor/debug.cpp" PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
+  set_source_files_properties(${onnxruntime_lazy_tensor_extension_srcs} PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
+  set_source_files_properties(${onnxruntime_lazy_tensor_extension_headers} PROPERTIES COMPILE_FLAGS -Wno-unused-parameter)
 
   list(APPEND onnxruntime_pybind_srcs
               ${onnxruntime_lazy_tensor_extension_srcs})
@@ -77,7 +69,7 @@ endif()
 
 # onnxruntime_ENABLE_LAZY_TENSOR and onnxruntime_ENABLE_EAGER_MODE
 # need DLPack code to pass tensors cross ORT and Pytorch boundry.
-# TODO: consider making DLPack code a standalone library. 
+# TODO: consider making DLPack code a standalone library.
 if (onnxruntime_ENABLE_LAZY_TENSOR OR onnxruntime_ENABLE_EAGER_MODE)
   # If DLPack code is not built, add it to ORT's pybind target.
   if (NOT onnxruntime_ENABLE_TRAINING_TORCH_INTEROP)
@@ -92,7 +84,7 @@ if(MSVC)
   target_compile_options(onnxruntime_pybind11_state PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>" "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
   if(onnxruntime_ENABLE_TRAINING)
     target_compile_options(onnxruntime_pybind11_state PRIVATE "/bigobj")
-  endif()  
+  endif()
 endif()
 if(HAS_CAST_FUNCTION_TYPE)
   target_compile_options(onnxruntime_pybind11_state PRIVATE "-Wno-cast-function-type")
@@ -152,13 +144,10 @@ if (onnxruntime_ENABLE_EAGER_MODE OR onnxruntime_ENABLE_LAZY_TENSOR)
 
   # todo: this is because the prebuild pytorch may use a different version of protobuf headers.
   # force the build to find the protobuf headers ort using.
-  target_include_directories(onnxruntime_pybind11_state PRIVATE "${REPO_ROOT}/cmake/external/protobuf/src")
-  target_include_directories(onnxruntime_pybind11_state PRIVATE "${TORCH_INSTALL_PREFIX}/include" "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include")
-  find_library(LIBTORCH_LIBRARY torch PATHS "${TORCH_INSTALL_PREFIX}/lib")
-  find_library(LIBTORCH_CPU_LIBRARY torch_cpu PATHS "${TORCH_INSTALL_PREFIX}/lib")
-  find_library(LIBTORCH_CUDA_LIBRARY torch_cuda PATHS "${TORCH_INSTALL_PREFIX}/lib")
-  find_library(LIBC10_LIBRARY c10 PATHS "${TORCH_INSTALL_PREFIX}/lib")
-  target_link_libraries(onnxruntime_pybind11_state PRIVATE ${LIBTORCH_LIBRARY} ${LIBTORCH_CPU_LIBRARY} ${LIBC10_LIBRARY} ${TORCH_PYTHON_LIBRARY} ${LIBTORCH_CUDA_LIBRARY})
+  target_include_directories(onnxruntime_pybind11_state PRIVATE
+    "${REPO_ROOT}/cmake/external/protobuf/src"
+    ${TORCH_INCLUDE_DIRS})
+  target_link_libraries(onnxruntime_pybind11_state PRIVATE ${TORCH_LIBRARIES})
   if (onnxruntime_ENABLE_EAGER_MODE)
     target_link_libraries(onnxruntime_pybind11_state PRIVATE onnxruntime_eager)
   endif()

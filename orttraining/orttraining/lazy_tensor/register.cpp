@@ -6,11 +6,11 @@
 // for extra Python headers.
 #include <torch/extension.h>
 #include <torch/csrc/jit/passes/pass_manager.h>
-#include <torch/csrc/jit/passes/graph_fuser.h>
 #include "torch/csrc/jit/passes/shape_analysis.h"
 #include <torch/csrc/jit/runtime/custom_operator.h>
 #include "accelerator.h"
 #include "flags.h"
+#include "fusion.h"
 #include "core/common/logging/logging.h"
 
 namespace onnxruntime {
@@ -37,12 +37,8 @@ void register_ort_as_torch_jit_executor() {
     }
 
     std::shared_ptr<torch::jit::Graph> new_subgraph_with_shapes(g->copyUnique().release());
-    torch::jit::PropagateInputShapes(new_subgraph_with_shapes);
-    //std::cout << "[Baseline full graph with shape] " << *new_subgraph_with_shapes << std::endl;
 
-    MyFuseGraph(g, Accelerator::Supported, accelerator_symbol);
-    //CustomFuseGraph(g, Accelerator::Supported, accelerator_symbol);
-    //std::cout << "[After my fusion]\n" << *g << std::endl;
+    OrtFuseGraph(g, Accelerator::Supported, accelerator_symbol);
     if (DumpOnnxFusion()) {
       std::cout << "[After fusion]\n" << *g;
     }
@@ -50,10 +46,6 @@ void register_ort_as_torch_jit_executor() {
 
   // Define a function to generate actual computation code for a
   // symbol (type: torch::jit::Node).
-  //
-  // TODO: Test (and enable) aliasing and in-place operators. Ideally, LazyTensor
-  //       converts sub-graphs to SSA before passing them to JIT, so we should
-  //       get them for free.
   torch::jit::OperationCreator op_creator =
       [](const torch::jit::Node* node) -> torch::jit::Operation {
     // Construct an accelerator instance. It's responsible
