@@ -1,11 +1,12 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
+#include "fusion.h"
 #include <torch/extension.h>
 #include <torch/csrc/jit/ir/alias_analysis.h>
-#include <torch/csrc/jit/codegen/fuser/interface.h>
-#include <torch/csrc/jit/passes/graph_fuser.h>
 #include <torch/csrc/jit/passes/common_subexpression_elimination.h>
 #include <torch/csrc/jit/passes/constant_pooling.h>
 #include <torch/csrc/jit/passes/dead_code_elimination.h>
-#include "fusion.h"
 
 namespace onnxruntime {
 namespace lazytensor {
@@ -51,25 +52,6 @@ struct OrtFuser {
 
   bool isFusable(torch::jit::Node* node) {
     return callback_(this, node);
-  }
-
-  bool isFusableDevice(torch::jit::Value* v, bool strict_fuser_check) {
-    if (!v->type()->isSubtypeOf(*c10::TensorType::get())) {
-      return true;
-    }
-    auto device = v->type()->expectRef<c10::TensorType>().device();
-    if (!device) {
-      return !strict_fuser_check;
-    }
-    if ((*device).is_cpu()) {
-      return torch::jit::canFuseOnCPULegacy();
-    } else if ((*device).is_cuda()) {
-      return torch::jit::canFuseOnGPU();
-    } else if ((*device).is_xpu()) {
-      return false;
-    } else {
-      TORCH_CHECK_NOT_IMPLEMENTED(false, "Unknown device for graph fuser");
-    }
   }
 
   bool calculatesSize(torch::jit::Node* node) {
