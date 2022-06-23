@@ -11,9 +11,11 @@
 #include <torch/csrc/jit/passes/shape_analysis.h>
 #include <torch/torch.h>
 #include "core/common/logging/sinks/clog_sink.h"
+#include "core/framework/execution_providers.h"
 #include "core/framework/session_options.h"
-#include "core/session/environment.h"
 #include "core/providers/cuda/cuda_provider_options.h"
+#include "core/providers/provider_factory_creators.h"
+#include "core/session/environment.h"
 #include "python/onnxruntime_pybind_state_common.h"
 #include "bridge.h"
 #include "debug.h"
@@ -332,7 +334,7 @@ public:
     provider_options.do_copy_in_default_stream = true;
     provider_options.alloc = CudaAllocDelegate;
     provider_options.free = CudaFreeDelegate;
-    auto factory = onnxruntime::CreateExecutionProviderFactory_Cuda(&provider_options);
+    auto factory = onnxruntime::CudaProviderFactoryCreator::Create(&provider_options);
     int device_count = 0;
     cudaGetDeviceCount(&device_count);
     for (int i = 0; i < device_count; ++i) {
