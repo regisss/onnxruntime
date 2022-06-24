@@ -16,6 +16,23 @@ namespace xnnpack {
 
 class Conv : public OpKernel {
  public:
+  enum InputTensors : int {
+    IN_X = 0,
+    IN_X_SCALE = 1,
+    IN_X_ZERO_POINT = 2,
+    IN_W = 3,
+    IN_W_SCALE = 4,
+    IN_W_ZERO_POINT = 5,
+    IN_Y_SCALE = 6,
+    IN_Y_ZERO_POINT = 7,
+    IN_BIAS = 8
+  };
+
+  enum OutputTensors : int {
+    OUT_Y = 0
+  };
+
+ public:
   Conv(const OpKernelInfo& info);
 
   Status Compute(OpKernelContext* /*context*/) const override;
@@ -43,6 +60,8 @@ class Conv : public OpKernel {
   xnn_code_cache code_cache_;
   xnn_caches caches_;
 #endif
+  QuantParam quant_param_;
+  xnn_compute_type conv_type_ = xnn_compute_type_invalid;
 };
 
 }  // namespace xnnpack

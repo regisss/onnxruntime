@@ -16,13 +16,44 @@ class GraphViewer;
 class NodeUnit;
 namespace xnnpack {
 
+// from xnnpack subgraph.h
+enum xnn_compute_type {
+  xnn_compute_type_invalid = 0,
+  xnn_compute_type_fp32,
+  xnn_compute_type_fp16,
+  xnn_compute_type_qc8,
+  xnn_compute_type_qs8,
+  xnn_compute_type_qu8,
+  /*
+  xnn_compute_type_fp32_to_fp16,
+  xnn_compute_type_fp32_to_qs8,
+  xnn_compute_type_fp32_to_qu8,
+  xnn_compute_type_fp16_to_fp32,
+  xnn_compute_type_qs8_to_fp32,
+  xnn_compute_type_qu8_to_fp32,*/
+};
+
+struct QuantParam {
+  uint8_t X_zero_point_value = 0;
+  uint8_t W_zero_point_value = 0;
+  uint8_t Y_zero_point_value = 0;
+
+  float X_scale_value = 0;
+  float W_scale_value = 0;
+  const float *W_scale_arr = 0;
+  float Y_scale_value = 0;
+};
+
 using Shape = std::vector<uint32_t>;
 enum class QuantizedOpType : uint8_t {
   QLinearConv,
   QLinearMaxPool,
+  QlinearAvgPool,
   // QDQ operator
   QDQConv,
   QDQMaxPool,
+  QDQAvgPool,
+  QDQSoftmax,
   Unknown,
 };
 
@@ -48,5 +79,9 @@ using XnnpackOperator = std::unique_ptr<struct xnn_operator, XnnpackOperatorDele
 std::unique_ptr<IndexedSubGraph::MetaDef> FuseActivation(const Node& conv, const Node& activation,
                                                          const GraphViewer& graph);
 std::unique_ptr<IndexedSubGraph::MetaDef> FuseQDQGroup(const NodeUnit& unit_node);
+
+bool GetType(const NodeArg& node_arg, int32_t& type);
+bool GetShape(const NodeArg& node_arg, Shape& shape);
+bool ParseQuantParamFromInfoByOrder(const OpKernelInfo& info, std::vector<int32_t> scale_zp_indexs, QuantParam& quant_param_, int32_t zptype);
 }  // namespace xnnpack
 }  // namespace onnxruntime

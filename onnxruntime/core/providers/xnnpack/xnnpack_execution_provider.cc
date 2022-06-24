@@ -34,6 +34,11 @@ class ONNX_OPERATOR_TYPED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kMSIntern
 
 class ONNX_OPERATOR_VERSIONED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kMSInternalNHWCDomain, 11, 11, MaxPool);
 class ONNX_OPERATOR_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kMSInternalNHWCDomain, 12, MaxPool);
+class ONNX_OPERATOR_VERSIONED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kMSInternalNHWCDomain, 7, 7, AveragePool);
+class ONNX_OPERATOR_TYPED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kMSDomain, 1, uint8_t, QLinearAveragePool);
+class ONNX_OPERATOR_VERSIONED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kOnnxDomain, 1, 11, Softmax);
+class ONNX_OPERATOR_VERSIONED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kMSDomain, 1, 11, QLinearSoftmax);
+class ONNX_OPERATOR_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kOnnxDomain, 12, Softmax);
 
 std::unique_ptr<KernelRegistry> RegisterKernels() {
   auto kernel_registry = std::make_unique<onnxruntime::KernelRegistry>();
@@ -46,6 +51,16 @@ std::unique_ptr<KernelRegistry> RegisterKernels() {
 
       KERNEL_CREATE_INFO_VERSIONED(11, 11, MaxPool),
       KERNEL_CREATE_INFO(12, MaxPool),
+      KERNEL_CREATE_INFO_VERSIONED(7, 7, AveragePool),
+      BuildKernelCreateInfo<
+          ONNX_OPERATOR_TYPED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kMSDomain, 1, uint8_t, QLinearAveragePool)>,
+      BuildKernelCreateInfo<
+          ONNX_OPERATOR_VERSIONED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kOnnxDomain, 1, 11, Softmax)>,
+      BuildKernelCreateInfo<
+          ONNX_OPERATOR_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kOnnxDomain, 12, Softmax)>,
+      BuildKernelCreateInfo<
+          ONNX_OPERATOR_VERSIONED_KERNEL_CLASS_NAME(kXnnpackExecutionProvider, kMSDomain, 1, 11, QLinearSoftmax)>,
+
   };
 
   for (auto& function_table_entry : function_table) {
@@ -120,18 +135,37 @@ std::vector<std::unique_ptr<ComputeCapability>> XnnpackExecutionProvider::GetCap
   // to prevent nodes in a NodeUnit to be checked for multiple times
   std::unordered_map<const NodeUnit*, bool> node_unit_supported_result;
   node_unit_supported_result.reserve(node_unit_holder.size());
-
+  std::unordered_set<NodeIndex> nodeIndex_map;
   for (NodeIndex idx : graph.GetNodesInTopologicalOrder()) {
     const Node* n = graph.GetNode(idx);
     if (n == nullptr) {
       continue;
     }
+    auto nm = n->Name();
+    if ("FeatureExtractor/MobileDetEdgeTPU/FusedConv/Conv_1/add_fold_dequant" == nm || nm == "FeatureExtractor/MobileDetEdgeTPU/FusedConv_1/add_prequant") {
+      //printf("%s,%zd,\n", nm.c_str(), n->GetOutputEdgesCount());
+      
+    }
     const NodeUnit& unit_node = *node_unit_map[n];
     // if node is part of a QDQ group. we will mark it compatiable in the first call as long as we support the target node.
-
+    auto safe_push_node_index = [&nodeIndex_map](std::vector<onnxruntime::NodeIndex>& vni, NodeIndex idx) {
+      if (nodeIndex_map.count(idx) == 0) {
+        vni.push_back(idx);
+        nodeIndex_map.insert(idx);
+      } else {
+        abort();
+      }
+    };
     const Node& node = *n;
     bool request_node = false;
-    if (node.GetExecutionProviderType() == "") {
+    if (unit_node.Index() == 143) {
+      printf(" ");
+    }
+    // any node in nodeunit will trigger IsNodeSupported, so we just check once.
+    if (node_unit_supported_result.count(&unit_node)) {
+      continue;
+    }
+    else if (node.GetExecutionProviderType() == "") {
       // unassigned node.
       // check if this is an ONNX operator that we have an NHWC xnnpack kernel for.
       if (checker.IsNodeSupported(unit_node)) {
@@ -166,18 +200,17 @@ std::vector<std::unique_ptr<ComputeCapability>> XnnpackExecutionProvider::GetCap
       request_node = true;
       // we will create a quantized Op to replace QDQGroup in the second call, then we can fuse it with activation after
       if (unit_node.UnitType() == NodeUnit::Type::QDQGroup) {
-        // any node in nodeunit will trigger IsNodeSupported, so we just check once.
-        if (node_unit_supported_result.count(&unit_node)) {
-          continue;
-        }
         // create a ComputeCapability for the QDQGroup node.
         std::unique_ptr<IndexedSubGraph> sub_graph = std::make_unique<IndexedSubGraph>();
         for (const auto& node_i : unit_node.GetInputNodes()) {
-          sub_graph->nodes.push_back(node_i->Index());
+          safe_push_node_index(sub_graph->nodes, node_i->Index());
+          //sub_graph->nodes.push_back(node_i->Index());
         }
-        sub_graph->nodes.push_back(unit_node.Index());
+        safe_push_node_index(sub_graph->nodes, unit_node.Index());
+        //sub_graph->nodes.push_back(unit_node.Index());
         for (const auto& node_o : unit_node.GetOutputNodes()) {
-          sub_graph->nodes.push_back(node_o->Index());
+          safe_push_node_index(sub_graph->nodes, node_o->Index());
+          //sub_graph->nodes.push_back(node_o->Index());
         }
         sub_graph->SetMetaDef(std::move(FuseQDQGroup(unit_node)));
         sub_graph->use_existing_schema = true;
@@ -198,15 +231,28 @@ std::vector<std::unique_ptr<ComputeCapability>> XnnpackExecutionProvider::GetCap
       // node belongs to another EP
       continue;
     }
-
+    node_unit_supported_result[&unit_node] = request_node;
     if (request_node) {
+      auto createSingleNode = [&](const Node& inode) {
         // create a ComputeCapability for the individual node.
         std::unique_ptr<IndexedSubGraph> sub_graph = std::make_unique<IndexedSubGraph>();
-        sub_graph->nodes.push_back(node.Index());
+        safe_push_node_index(sub_graph->nodes, inode.Index());
+        //sub_graph->nodes.push_back(inode.Index());
         capabilities.push_back(std::make_unique<ComputeCapability>(std::move(sub_graph)));
 
         node_to_compute_capability.insert({&node, capabilities.back().get()});
         supported_nodes.insert(&node);
+      };
+      //if unit_node is not a qdqgroup, GetInputNodes and GetOutputNodes will be empty
+      for (auto inode : unit_node.GetInputNodes()) {
+        createSingleNode(*inode);
+      }
+      createSingleNode(unit_node.GetNode());
+      for (auto onode : unit_node.GetOutputNodes()) {
+        if (onode->Index() != unit_node.Index()) {
+          createSingleNode(*onode);
+        }
+      }
     }
   }
 

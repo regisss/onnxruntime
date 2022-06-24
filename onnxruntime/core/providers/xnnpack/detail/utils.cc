@@ -2,14 +2,45 @@
 // Licensed under the MIT License.
 
 #include "utils.h"
+#include <unordered_map>
 
 #include "core/framework/tensorprotoutils.h"
 #include "core/graph/indexed_sub_graph.h"
 #include "core/graph/node_attr_utils.h"
 
 #include "core/providers/shared/node_unit/node_unit.h"
+#include "onnx/defs/attr_proto_util.h"
+#include "core/common/safeint.h"
 namespace onnxruntime {
 namespace xnnpack {
+
+bool GetType(const NodeArg& node_arg, int32_t& type) {
+  type = ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
+  const auto* type_proto = node_arg.TypeAsProto();
+  if (!type_proto || !type_proto->has_tensor_type() || !type_proto->tensor_type().has_elem_type()) {
+    LOGS_DEFAULT(WARNING) << "NodeArg [" << node_arg.Name() << "] has no input type";
+    return false;
+  }
+
+  type = type_proto->tensor_type().elem_type();
+  return true;
+}
+
+bool GetShape(const NodeArg& node_arg, Shape& shape) {
+  shape.clear();
+  const auto* shape_proto = node_arg.Shape();
+
+  if (!shape_proto) {
+    LOGS_DEFAULT(WARNING) << "NodeArg [" << node_arg.Name() << "] has no shape info";
+    return false;
+  }
+
+  // uses 0 for dynamic dimension, which is the default value for dim.dim_value()
+  for (const auto& dim : shape_proto->dim())
+    shape.push_back(SafeInt<uint32_t>(dim.dim_value()));
+
+  return true;
+}
 
 QuantizedOpType GetQuantizedOpType(const NodeUnit& node_unit) {
   const auto& op_type = node_unit.OpType();
@@ -18,6 +49,12 @@ QuantizedOpType GetQuantizedOpType(const NodeUnit& node_unit) {
       return QuantizedOpType::QDQConv;
     else if (op_type == "MaxPool")
       return QuantizedOpType::QDQMaxPool;
+    else if (op_type == "AveragePool")
+      return QuantizedOpType::QDQAvgPool;
+    else if (op_type == "Softmax")
+      return QuantizedOpType::QDQSoftmax;
+  } else if (node_unit.OpType() == "QLinearConv") {
+    return QuantizedOpType::QLinearConv;
   }
   return QuantizedOpType::Unknown;
 }
@@ -28,18 +65,28 @@ bool IsPaddingTypeSupported(AutoPadType auto_pad) {
          auto_pad == AutoPadType::SAME_UPPER;
 }
 
+typedef std::string ONNXOpType;
+
+static std::unordered_map<QuantizedOpType, ONNXOpType> QDQType_Onnxtype_map = {
+    {QuantizedOpType::QDQConv, "QLinearConv"},
+    {QuantizedOpType::QDQAvgPool, "QLinearAveragePool"},
+    {QuantizedOpType::QDQSoftmax, "QLinearSoftmax"},
+    {QuantizedOpType::QDQMaxPool, "QLinearMaxPool"},
+};
+
 std::unique_ptr<IndexedSubGraph::MetaDef> FuseQDQGroup(const NodeUnit& unit_node) {
   QuantizedOpType qtype = GetQuantizedOpType(unit_node);
   // create a ComputeCapability for QDQ node.
   std::unique_ptr<IndexedSubGraph::MetaDef> metadef = std::make_unique<IndexedSubGraph::MetaDef>();
   IndexedSubGraph::MetaDef& def = *metadef;
-
+  if (QDQType_Onnxtype_map.count(qtype) == 0) {
+    return metadef;
+  }
   // inputs
   const auto& inputs = unit_node.Inputs();
-
+  def.name = QDQType_Onnxtype_map[qtype];
   if (qtype == QuantizedOpType::QDQConv) {
     // registration
-    def.name = "QLinearConv";
     def.domain = kMSInternalNHWCDomain;  // node.Domain();  // should always be kMSInternalNHWCDomain
     def.since_version = 10;              // onnx schema version
     if (inputs.size() > 2) {             // with bias
@@ -64,8 +111,31 @@ std::unique_ptr<IndexedSubGraph::MetaDef> FuseQDQGroup(const NodeUnit& unit_node
     if (inputs.size() > 2) {
       def.inputs.push_back(inputs[2].node_arg.Name());
     }
+  } else if (qtype == QuantizedOpType::QDQAvgPool || qtype == QuantizedOpType::QDQSoftmax) {
+    // registration
+    def.domain = kMSDomain;  // should always be kMSDomain
+    def.since_version = 1;   // onnx schema version
+    //x xsc xzp ysc yzp
+    def.inputs.reserve(5);
+    // x x-scale x-zp
+    std::for_each(inputs.cbegin(), inputs.cend(),
+                  [&def](const NodeUnitIODef& arg) {
+                    // keep the number of inputs the same by inserting an empty string for a missing optional input
+                    def.inputs.push_back(arg.node_arg.Name());
+                    const auto& quant_param = arg.quant_param.value();
+                    def.inputs.push_back(quant_param.scale.Name());
+                    def.inputs.push_back(quant_param.zero_point ? quant_param.zero_point->Name() : "");
+                  });
+    // y-scale y-zeropoint
+    const auto& y_quant_param = unit_node.Outputs()[0].quant_param.value();
+    def.inputs.push_back(y_quant_param.scale.Name());
+    def.inputs.push_back(y_quant_param.zero_point ? y_quant_param.zero_point->Name() : "");
+    //we used the nhwc schema here, and avgpool is layout sensitive
+    if (qtype == QuantizedOpType::QDQAvgPool){
+      def.attributes["channels_last"] = utils::MakeAttribute(std::string("channels_last"), int64_t(1));
+    }
   } else {
-    //QDQMaxPool?
+    // QDQMaxPool?
   }
   // outputs
   for (const auto& out : unit_node.Outputs()) {
@@ -74,8 +144,7 @@ std::unique_ptr<IndexedSubGraph::MetaDef> FuseQDQGroup(const NodeUnit& unit_node
 
   // attributes
   // copy existing and add the activation info
-  def.attributes = unit_node.GetNode().GetAttributes();
-  
+  def.attributes.insert(unit_node.GetNode().GetAttributes().begin(),unit_node.GetNode().GetAttributes().end());
   return metadef;
 }
 
@@ -157,5 +226,6 @@ std::unique_ptr<IndexedSubGraph::MetaDef> FuseActivation(const Node& node, const
 
   return metadef;
 }
+
 }  // namespace xnnpack
 }  // namespace onnxruntime

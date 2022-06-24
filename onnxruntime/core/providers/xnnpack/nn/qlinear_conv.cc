@@ -10,15 +10,6 @@
 
 namespace onnxruntime {
 namespace xnnpack {
-struct QuantParam {
-  uint8_t X_zero_point_value;
-  uint8_t W_zero_point_value;
-  uint8_t Y_zero_point_value;
-
-  float X_scale_value;
-  float W_scale_value;
-  float Y_scale_value;
-};
 
 namespace {
 Status CreateXnnpackKernel(const ConvAttributes& conv_attrs,
@@ -34,8 +25,10 @@ Status CreateXnnpackKernel(const ConvAttributes& conv_attrs,
 #endif
 ) {
 
-  const auto* W_data = W.Data<uint8_t>();
-
+  uint32_t flags = 0;
+  if (conv_attrs.auto_pad == AutoPadType::SAME_UPPER) {
+    flags |= XNN_FLAG_TENSORFLOW_SAME_PADDING;
+  }
   int64_t group_count = conv_attrs.group;
   int64_t group_input_channels = C / group_count;
   int64_t group_output_channels = M / group_count;
@@ -60,7 +53,7 @@ Status CreateXnnpackKernel(const ConvAttributes& conv_attrs,
       static_cast<size_t>(M),
       quant_param.X_zero_point_value, quant_param.X_scale_value,
       quant_param.W_zero_point_value, quant_param.W_scale_value,
-      W_data, B_data,
+      W.Data<uint8_t>(), B_data,
       quant_param.Y_zero_point_value, quant_param.Y_scale_value,
       output_min, output_max,
       0,  // flags
@@ -242,14 +235,9 @@ Status QLinearConv::Compute(OpKernelContext* context) const {
   const int64_t H = X_shape[1];
   const int64_t W = X_shape[2];
 
-  const size_t kernel_rank = kernel_shape_.size();
-
   TensorShapeVector Y_dims({N});
   TensorShape input_shape = {H, W};
   ConvAttributes::ConvPadVector pads(conv_attrs_.pads);
-  if (pads.empty()) {
-    pads.resize(kernel_rank * 2, 0);
-  }
   ORT_RETURN_IF_ERROR(conv_attrs_.InferPadsAndOutputShape(input_shape, kernel_shape_,
                                                           conv_attrs_.strides, conv_attrs_.dilations, pads,
                                                           Y_dims));
@@ -284,7 +272,7 @@ ONNX_OPERATOR_KERNEL_EX(
         .TypeConstraint("T4", DataTypeImpl::GetTensorType<int32_t>()),
     QLinearConv);
 */
-
+/*
 ONNX_OPERATOR_TYPED_KERNEL_EX(
     QLinearConv,
     kMSInternalNHWCDomain,
@@ -296,6 +284,6 @@ ONNX_OPERATOR_TYPED_KERNEL_EX(
         .TypeConstraint("T2", {DataTypeImpl::GetTensorType<uint8_t>(), DataTypeImpl::GetTensorType<int8_t>()})
         .TypeConstraint("T3", DataTypeImpl::GetTensorType<uint8_t>()),
     QLinearConv);
-
+*/
 }  // namespace xnnpack
 }  // namespace onnxruntime

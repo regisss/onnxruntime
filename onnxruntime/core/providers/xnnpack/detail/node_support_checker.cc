@@ -84,7 +84,10 @@ bool NodeSupportChecker::IsNodeSupported(const NodeUnit& nodeunit) {
   auto& node = nodeunit.GetNode();
   static std::unordered_map<std::string, CheckerFn> checkers{
       {"Conv", IsConvOnnxNodeSupported},
+      {"QLinearConv", IsConvOnnxNodeSupported},
       {"MaxPool", IsMaxPoolOnnxNodeSupported},
+      {"AveragePool", IsAveragePoolOnnxNodeSupported},
+      {"Softmax", IsSoftmaxOnnxNodeSupported},
   };
 
   bool supported = false;
