@@ -141,26 +141,10 @@ std::vector<std::unique_ptr<ComputeCapability>> XnnpackExecutionProvider::GetCap
     if (n == nullptr) {
       continue;
     }
-    auto nm = n->Name();
-    if ("FeatureExtractor/MobileDetEdgeTPU/FusedConv/Conv_1/add_fold_dequant" == nm || nm == "FeatureExtractor/MobileDetEdgeTPU/FusedConv_1/add_prequant") {
-      //printf("%s,%zd,\n", nm.c_str(), n->GetOutputEdgesCount());
-      
-    }
     const NodeUnit& unit_node = *node_unit_map[n];
     // if node is part of a QDQ group. we will mark it compatiable in the first call as long as we support the target node.
-    auto safe_push_node_index = [&nodeIndex_map](std::vector<onnxruntime::NodeIndex>& vni, NodeIndex idx) {
-      if (nodeIndex_map.count(idx) == 0) {
-        vni.push_back(idx);
-        nodeIndex_map.insert(idx);
-      } else {
-        abort();
-      }
-    };
     const Node& node = *n;
     bool request_node = false;
-    if (unit_node.Index() == 143) {
-      printf(" ");
-    }
     // any node in nodeunit will trigger IsNodeSupported, so we just check once.
     if (node_unit_supported_result.count(&unit_node)) {
       continue;
@@ -203,14 +187,11 @@ std::vector<std::unique_ptr<ComputeCapability>> XnnpackExecutionProvider::GetCap
         // create a ComputeCapability for the QDQGroup node.
         std::unique_ptr<IndexedSubGraph> sub_graph = std::make_unique<IndexedSubGraph>();
         for (const auto& node_i : unit_node.GetInputNodes()) {
-          safe_push_node_index(sub_graph->nodes, node_i->Index());
-          //sub_graph->nodes.push_back(node_i->Index());
+          sub_graph->nodes.push_back(node_i->Index());
         }
-        safe_push_node_index(sub_graph->nodes, unit_node.Index());
-        //sub_graph->nodes.push_back(unit_node.Index());
+        sub_graph->nodes.push_back(unit_node.Index());
         for (const auto& node_o : unit_node.GetOutputNodes()) {
-          safe_push_node_index(sub_graph->nodes, node_o->Index());
-          //sub_graph->nodes.push_back(node_o->Index());
+          sub_graph->nodes.push_back(node_o->Index());
         }
         sub_graph->SetMetaDef(std::move(FuseQDQGroup(unit_node)));
         sub_graph->use_existing_schema = true;
@@ -236,8 +217,7 @@ std::vector<std::unique_ptr<ComputeCapability>> XnnpackExecutionProvider::GetCap
       auto createSingleNode = [&](const Node& inode) {
         // create a ComputeCapability for the individual node.
         std::unique_ptr<IndexedSubGraph> sub_graph = std::make_unique<IndexedSubGraph>();
-        safe_push_node_index(sub_graph->nodes, inode.Index());
-        //sub_graph->nodes.push_back(inode.Index());
+        sub_graph->nodes.push_back(inode.Index());
         capabilities.push_back(std::make_unique<ComputeCapability>(std::move(sub_graph)));
 
         node_to_compute_capability.insert({&node, capabilities.back().get()});
