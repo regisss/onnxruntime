@@ -127,15 +127,6 @@ AllocatorPtr CUDAExecutionProvider::CreateCudaAllocator(OrtDevice::DeviceId devi
         false);
 
     return CreateAllocator(default_memory_info);
-  } else if (external_allocator_info.TypeSafeUseExternalAllocator()) {
-    AllocatorCreationInfo default_memory_info(
-        [external_allocator_info](OrtDevice::DeviceId id) {
-          return std::make_unique<CUDAExternalAllocator>(id, CUDA, external_allocator_info.type_safe_alloc, external_allocator_info.type_safe_free, external_allocator_info.type_safe_empty_cache);
-        },
-        device_id,
-        false);
-
-    return CreateAllocator(default_memory_info);
   } else {
     AllocatorCreationInfo default_memory_info(
         [](OrtDevice::DeviceId id) {

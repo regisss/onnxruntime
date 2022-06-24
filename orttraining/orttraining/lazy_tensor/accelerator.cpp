@@ -2,26 +2,26 @@
 // Licensed under the MIT License.
 
 #include "accelerator.h"
-#include "cuda.h"
-#include "cuda_runtime.h"
-#include "nvToolsExt.h"
+// C++
 #include <iostream>
+#include <mutex>
+#include <sstream>
 #include <string>
+// Pytorch.
 #include <torch/csrc/jit/passes/onnx.h>
 #include <torch/csrc/jit/passes/shape_analysis.h>
 #include <torch/torch.h>
+// ORT friends.
 #include "core/common/logging/sinks/clog_sink.h"
 #include "core/framework/execution_providers.h"
 #include "core/framework/session_options.h"
-#include "core/providers/cuda/cuda_provider_options.h"
-#include "core/providers/provider_factory_creators.h"
 #include "core/session/environment.h"
 #include "python/onnxruntime_pybind_state_common.h"
+// Lazy tensor specific.
 #include "bridge.h"
+#include "cuda_tool.h"
 #include "debug.h"
 #include "flags.h"
-#include <ATen/cuda/CUDAContext.h>
-#include <sstream>
 
 namespace onnxruntime {
 namespace lazytensor {
@@ -33,19 +33,6 @@ namespace prim = torch::jit::prim;
 // static variable used to create inference session and training session.
 const static std::string env_name = std::string("LTC");
 static std::unique_ptr<onnxruntime::Environment> ltc_env;
-
-class NvtxRange {
- public:
-  NvtxRange(const char* name) {
-    nvtxRangePush(name);
-  }
-  NvtxRange(const std::string& name) {
-    nvtxRangePush(name.c_str());
-  }
-  ~NvtxRange() {
-    nvtxRangePop();
-  }
-};
 
 onnxruntime::Environment& GetLtcEnv() {
   if (!ltc_env) {
@@ -67,7 +54,6 @@ bool Accelerator::Supported(const torch::jit::Node* node) {
     return false;
   }
 
-  //std::cout << "Judge op: " << ToString(*node) << std::endl;
   switch (node->kind()) {
     // TODO: add as many ops as possible.
     case aten::embedding:
@@ -309,47 +295,6 @@ static OrtDevice CheckAndGetTensorDevice(at::ArrayRef<c10::IValue>& values) {
   return CreateOrtDevice(unique_tensor_device);
 }
 
-// Wrapper of memory allocation function.
-void* CudaAllocDelegate(size_t nbytes) {
-  auto allocator = at::cuda::getCUDADeviceAllocator();
-  return allocator->raw_allocate(nbytes);
-}
-
-// Wrapper of memory de-allocation function.
-void CudaFreeDelegate(void* ptr) {
-  auto allocator = at::cuda::getCUDADeviceAllocator();
-  allocator->raw_deallocate(ptr);
-}
-
-// Class holding the CUDA EPs (one unique EP per device)
-// shared by all sessions.
-class CudaEpPool {
-public:
-  static CudaEpPool& GetInstance() {
-    static CudaEpPool instance;
-    return instance;
-  }
-  CudaEpPool() {
-    OrtCUDAProviderOptions provider_options{};
-    provider_options.do_copy_in_default_stream = true;
-    provider_options.alloc = CudaAllocDelegate;
-    provider_options.free = CudaFreeDelegate;
-    auto factory = onnxruntime::CudaProviderFactoryCreator::Create(&provider_options);
-    int device_count = 0;
-    cudaGetDeviceCount(&device_count);
-    for (int i = 0; i < device_count; ++i) {
-      provider_options.device_id = i;
-      cuda_eps_.emplace_back(std::move(factory->CreateProvider()));
-    }
-  }
-  std::shared_ptr<IExecutionProvider> GetEp(const int device_id) {
-    return cuda_eps_.at(device_id);
-  }
-private:
-  size_t count_;
-  std::vector<std::shared_ptr<IExecutionProvider>> cuda_eps_;
-};
-
 // Initialize empty session with ONNX model.
 static void InitializeSession(
     const OrtDevice device,
@@ -362,7 +307,8 @@ static void InitializeSession(
   // If we don't add CUDA EP, ONNX Runtime may throw even when running MNIST.
   // Information needed to construct CUDA execution providers.
   if (device.Type() == OrtDevice::GPU) {
-    ORT_THROW_IF_ERROR(sess.RegisterExecutionProvider(CudaEpPool::GetInstance().GetEp(device.Id())));
+    ORT_THROW_IF_ERROR(sess.RegisterExecutionProvider(
+      CUDAExecutionProviderPool::GetInstance().GetExecutionProvider(device.Id())));
   }
 #endif
   ORT_THROW_IF_ERROR(sess.Load(serialized_model.data(), serialized_model.size()));
