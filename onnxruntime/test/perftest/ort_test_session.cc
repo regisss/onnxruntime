@@ -585,7 +585,7 @@ void OnnxRuntimeTestSession::initilize_tensor_with_seed(int32_t seed, ONNXTensor
       break;
     }
     default:
-      "not implemented yet, we won't initialize it";
+      //"not implemented yet, we won't initialize it";
       break;
   }
 }
