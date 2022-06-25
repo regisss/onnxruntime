@@ -23,6 +23,12 @@ struct CUDAExecutionProviderExternalAllocatorInfo {
     empty_cache = nullptr;
   }
 
+  CUDAExecutionProviderExternalAllocatorInfo(void* a, void* f, void* e) {
+    alloc = a;
+    free = f;
+    empty_cache = e;
+  }
+
   bool UseExternalAllocator() const {
     return (alloc != nullptr) && (free != nullptr);
   }

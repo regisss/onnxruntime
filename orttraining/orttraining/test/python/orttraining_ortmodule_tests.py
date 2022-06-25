@@ -145,9 +145,30 @@ def run_data_sampler_tests(cwd, log):
 def run_lazy_tensor_tests(cwd, log):
     log.debug("Running: Lazy Tensor tests")
 
+    #  Set debug flags to print more info.
+    env = {
+        # Print the Pytorch graph (torch::jit::Graph)
+        # sent to ORT.
+        "ORT_LT_DUMP_GRAPH": "1",
+        # Print inputs from Pytorch and
+        # outputs computed by ORT.
+        "ORT_LT_DUMP_INPUTS_OUTPUTS": "1",
+        # Compare ORT outputs and Pytorch
+        # outputs. Throw if they are not equal.
+        # This is very helpful when debugging
+        # numerical error.
+        "ORT_LT_CHECK_BASELINE": "1",
+        # Print all operators saw in the fusion
+        # where "ort::graph" is created.
+        # "ort::graph" only contains a subset
+        # of all operators because some operators
+        # may fallback to Pytorch.
+        "ORT_LT_DUMP_ATEN_OP_HISTORY": "1",
+    }
+
     command = [sys.executable, "-m", "pytest", "-sv", "orttraining_test_lort.py"]
 
-    run_subprocess(command, cwd=cwd, log=log).check_returncode()
+    run_subprocess(command, cwd=cwd, log=log, env=env).check_returncode()
 
 
 def main():

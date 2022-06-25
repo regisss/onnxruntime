@@ -151,9 +151,7 @@ CUDAExecutionProvider::PerThreadContext::PerThreadContext(OrtDevice::DeviceId de
   CUBLAS_CALL_THROW(cublasCreate(&cublas_handle_));
   CUBLAS_CALL_THROW(cublasSetStream(cublas_handle_, stream));
 
-  std::cout << "Before cudnnCreate(&cudnn_handle_) @ " << &cudnn_handle_ << "\n";
   CUDNN_CALL_THROW(cudnnCreate(&cudnn_handle_));
-  std::cout << "After cudnnCreate(&cudnn_handle_) @ " << &cudnn_handle_ << "\n";
   CUDNN_CALL_THROW(cudnnSetStream(cudnn_handle_, stream));
 
   // CUDA malloc/free is expensive so always use an arena
@@ -175,9 +173,7 @@ CUDAExecutionProvider::PerThreadContext::~PerThreadContext() {
   }
 
   try {
-    std::cout << "Before cudnnDestroy(cudnn_handle_) @ " << &cudnn_handle_ << "\n";
     CUDNN_CALL(cudnnDestroy(cudnn_handle_));
-    std::cout << "After cudnnDestroy(cudnn_handle_) @ " << &cudnn_handle_ << "\n";
   } catch (const std::exception& ex) {
     LOGS_DEFAULT(ERROR) << "cudnnDestroy threw:" << ex.what();
   }
