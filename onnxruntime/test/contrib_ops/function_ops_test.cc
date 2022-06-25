@@ -28,7 +28,7 @@ class ContribFunExpansionTest : public ::testing::Test {
 
 template <typename T, typename U, bool RunTest>
 void CheckLayerNorm(bool compute_mean = true, bool compute_isd = true, std::vector<int64_t> shape1 = {8, 16}, std::vector<int64_t> shape2 = {16}, int64_t axis = -1) {
-  FunctionTestCase testCase("LayerNormalization", kMSDomain);
+  FunctionTestCase testCase("LayerNormalization", kOnnxDomain);
 
   testCase.AddInput<T, RunTest>("x", shape1);
   testCase.AddInput<T, RunTest>("scale", shape2);

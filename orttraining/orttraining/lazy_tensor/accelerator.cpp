@@ -101,9 +101,12 @@ bool Accelerator::Supported(const torch::jit::Node* node) {
 }
 
 void Accelerator::OrtRun(torch::jit::Stack& stack) {
-  // TODO: use __func__.
-  NvtxRange range("Accelerator::OrtRun");
-  NvtxRange range_graph(subgraph_->toString(true));
+  NvtxRange range(__func__);
+  // Uncomment the following if you want to see the
+  // sub-graph in Nsys profiling result. This is useful
+  // for debugging.
+  //
+  // NvtxRange range_graph(subgraph_->toString(true));
   if (DumpGraph()) {
     std::cout << "[ORT,Graph]\n"
               << subgraph_->toString(true);
@@ -144,7 +147,7 @@ void Accelerator::OrtRun(torch::jit::Stack& stack) {
 
 void Accelerator::PytorchRun(torch::jit::Stack& stack) {
   DynamicSettings::GetInstance().SetOnnxFusionFlag(false);
-  NvtxRange range("Accelerator::PytorchRun");
+  NvtxRange range(__func__);
   if (DumpGraph()) {
     std::cout << "[Pytorch,Graph]\n"
               << subgraph_->toString(true);
@@ -167,7 +170,7 @@ void Accelerator::PytorchRun(torch::jit::Stack& stack) {
 }
 
 void Accelerator::DebugRun(torch::jit::Stack& stack) {
-  NvtxRange range("Accelerator::DebugRun");
+  NvtxRange range(__func__);
   torch::jit::Stack copy;
   copy = stack;
   OrtRun(stack);
@@ -199,7 +202,7 @@ void Accelerator::Run(torch::jit::Stack& stack) {
 static void CheckArgs(
     const at::ArrayRef<c10::IValue>& inputs) {
   // TODO: remove this check.
-  NvtxRange range("CheckArgs");
+  NvtxRange range(__func__);
   TORCH_CHECK(inputs.size(), "Need at least one input.");
   for (const auto& input : inputs) {
     TORCH_CHECK(input.isTensor() || input.isScalar(), "Compiler can only handle Tensor or Scalar inputs.");
@@ -239,7 +242,7 @@ static void PropagateArgTypes(
 static std::string ExportToOnnx(
     std::shared_ptr<torch::jit::Graph> graph,
     const at::ArrayRef<c10::IValue>& args) {
-  NvtxRange range("ExportToOnnx");
+  NvtxRange range(__func__);
   // ONNX exporter modifies the graph in-place, so we
   // need to clone it to avoid interaction between
   // Pytorch's JIT mechanism and ONNX graph.
@@ -261,7 +264,7 @@ static std::string ExportToOnnx(
 // Create an empty session object.
 // Models will be loaded later.
 static std::unique_ptr<onnxruntime::InferenceSession> CreateSession() {
-  NvtxRange range("CreateSession");
+  NvtxRange range(__func__);
   // Enviroment shared by all sessions.
   static onnxruntime::Environment& pybind_default_env = GetLtcEnv();
   // All sessions use the same config.
@@ -300,7 +303,7 @@ static void InitializeSession(
     const OrtDevice device,
     const std::string& serialized_model,
     onnxruntime::InferenceSession& sess) {
-  NvtxRange range("InitializeSession");
+  NvtxRange range(__func__);
   // Add EPs.
 #ifdef USE_CUDA
   // When CUDA is enabled, some CUDA-only graph graph fusions are enabled.
@@ -316,7 +319,7 @@ static void InitializeSession(
 }
 
 void Accelerator::ExampleRun(at::ArrayRef<c10::IValue> inputs) {
-  NvtxRange range("[Accelerator::Compile] ExampleRun");
+  NvtxRange range(__func__);
   torch::jit::Stack stack;
   for (auto input : inputs) {
     stack.push_back(input);
